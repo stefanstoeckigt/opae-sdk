@@ -13,7 +13,7 @@ addons:
       description: "open programmable acceleration engine SDK"
     notification_email: "rodrigo.rojo@intel.com"
     build_command_prepend: "mkdir coverity_scan && pushd coverity_scan && cmake ../"
-    build_command: "cd coverity_scan && make"
+    build_command: "make"
     branch_pattern: "coverity_scan"
   apt:
     packages:
