@@ -34,11 +34,6 @@ matrix:
       before_install:
         - echo -n | openssl s_client -connect scan.coverity.com:443 | sed -ne '/-BEGIN CERTIFICATE-/,/-END CERTIFICATE-/p' | sudo tee -a /etc/ssl/certs/ca-
       addons:
-        apt:
-          packages:
-            - libboost-all-dev
-            - libjson-c-dev
-            - uuid-dev
         coverity_scan:
           project:
             name: "opae-sdk"
@@ -47,3 +42,8 @@ matrix:
           build_command_prepend: "mkdir coverity_scan && pushd coverity_scan && cmake ../"
           build_command: "cd coverity_scan && make"
           branch_pattern: "coverity_scan"
+        apt:
+          packages:
+            - libboost-all-dev
+            - libjson-c-dev
+            - uuid-dev
