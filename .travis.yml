@@ -8,14 +8,13 @@ script: echo "coverity_scan"
 before_install:
 - echo -n | openssl s_client -connect scan.coverity.com:443 | sed -ne '/-BEGIN CERTIFICATE-/,/-END
   CERTIFICATE-/p' | sudo tee -a /etc/ssl/certs/ca-
-- ./scripts/merge-master.sh
 addons:
   coverity_scan:
     project:
       name: opae-sdk
       description: open programmable acceleration engine SDK
     notification_email: rodrigo.rojo@intel.com
-    build_command_prepend: mkdir coverity_scan && pushd coverity_scan && cmake ../
+    build_command_prepend: ./scripts/merge-master.sh && mkdir coverity_scan && pushd coverity_scan && cmake ../
     build_command: make
     branch_pattern: coverity_scan
   apt:
