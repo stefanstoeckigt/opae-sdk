@@ -1,5 +1,5 @@
 #!/bin/bash -e
-
+git fetch origin master
 git merge --ff-only origin/master
 if [ $? == 0 ]; then
     echo "Successfully merged master"
