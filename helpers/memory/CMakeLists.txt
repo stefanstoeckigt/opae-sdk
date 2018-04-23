@@ -13,16 +13,12 @@ set(DMA_MEM_SRC
    x86-sse2.S
 )
 
-add_library(intel_opae_dma_helper SHARED ${DMA_MEM_SRC})
+add_library(intel_opae_dma_helper STATIC ${DMA_MEM_SRC})
 
 target_link_libraries(intel_opae_dma_helper
-   pkg_editor.a
    safestr
-   libelf.so.0
    -lpthread
-   -lz
    -lopae-c
-   -luuid
 )
 
 install(TARGETS intel_opae_dma_helper

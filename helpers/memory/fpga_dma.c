@@ -181,7 +181,9 @@ static fpga_result _do_dma(fpga_dma_handle dma_h, uint64_t dst, uint64_t src,
 	msgdma_ext_desc_t desc = { 0 };
 	fpga_result res = FPGA_OK;
 	uint64_t alignment_offset = 0;
-	uint64_t segment_size = 0;
+
+        (void)dst_ptr;
+        (void)src_ptr;
 
 	// src, dst and count must be 64-byte aligned
 
@@ -239,7 +241,7 @@ static fpga_result _do_dma(fpga_dma_handle dma_h, uint64_t dst, uint64_t src,
 			if (alignment_offset != 0) {
 				// Short burst to get 4CL aligned
 				uint64_t left_to_align = (4 * FPGA_DMA_ALIGN_BYTES) - alignment_offset;
-				to_copy = min(count, left_to_align);
+				to_copy = min((uint64_t)count, left_to_align);
 				assert(to_copy > 0);
 			}
 
@@ -266,7 +268,7 @@ static fpga_result _do_dma(fpga_dma_handle dma_h, uint64_t dst, uint64_t src,
 
 			src += to_copy;
 			dst += to_copy;
-			assert(to_copy <= count);
+			assert(to_copy <= (uint64_t)count);
 			count -= to_copy;
 		}
 	}                       // end of FPGA --> Host or Host --> FPGA transfer
@@ -690,6 +692,13 @@ fpga_result fpgaDmaTransferAsync(fpga_dma_handle dma, uint64_t dst,
                                  fpga_dma_transfer_t type,
                                  fpga_dma_transfer_cb cb, void *context)
 {
+        (void)dma;
+        (void)dst;
+        (void)src;
+        (void)count;
+        (void)type;
+        (void)cb;
+        (void)context;
 	// TODO
 	return FPGA_NOT_SUPPORTED;
 }

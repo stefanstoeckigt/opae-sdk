@@ -115,6 +115,7 @@ static void *SSE2_memcpy(void *dst, size_t max, const void *src, size_t n)
 
 static void *memcpy_wrap(void *dst, size_t max, const void *src, size_t n)
 {
+        (void)max;
 	return memcpy(dst, src, n);
 }
 

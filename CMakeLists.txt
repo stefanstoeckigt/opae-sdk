@@ -128,6 +128,7 @@ endif()
 
 add_subdirectory(platforms)
 add_subdirectory(tools)
+add_subdirectory(helpers/memory)
 
 option(BUILD_ASE "Enable ASE compilation" ON)
 mark_as_advanced(BUILD_ASE)
