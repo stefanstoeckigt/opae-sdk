@@ -25,8 +25,7 @@
 ## POSSIBILITY OF SUCH DAMAGE.
 
 
-include_directories(${OPAE_INCLUDE_DIR}
-                    ${OPAE_SDK_SOURCE}/libopae/src )
+include_directories(${OPAE_INCLUDE_DIR})
 
 set(CMAKE_C_FLAGS "-std=gnu99 ${CMAKE_C_FLAGS}")
 
@@ -38,7 +37,7 @@ add_executable(ras ${SRC})
 
 set_install_rpath(ras)
 
-target_link_libraries(ras opae-c pthread uuid json-c ${CMAKE_THREAD_LIBS_INIT})
+target_link_libraries(ras opae-c pthread uuid ${libjson-c_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT})
 
 install(TARGETS ras
         RUNTIME DESTINATION bin

@@ -77,6 +77,7 @@ void api_guid_to_fpga(uint64_t guidh, uint64_t guidl, uint8_t *guid)
 struct dev_list {
 	fpga_objtype objtype;
 	fpga_guid guid;
+	uint16_t segment;
 	uint8_t bus;
 	uint8_t device;
 	uint8_t function;
@@ -248,7 +249,7 @@ fpga_result __FPGA_API__ fpgaGetProperties(fpga_token token,
 	fpga_result result = FPGA_OK;
 	ASSERT_NOT_NULL(prop);
 	//ASSERT_NOT_NULL(token);
-	_prop = malloc(sizeof(struct _fpga_properties));
+	_prop = ase_malloc(sizeof(struct _fpga_properties));
 	if (NULL == _prop) {
 		FPGA_MSG("Failed to allocate memory for properties");
 		return FPGA_NO_MEMORY;
@@ -268,6 +269,7 @@ fpga_result __FPGA_API__ fpgaGetProperties(fpga_token token,
 	return result;
 out_free:
 	free(_prop);
+	_prop = NULL;
 	return result;
 }
 
@@ -285,7 +287,7 @@ fpga_result __FPGA_API__ fpgaCloneProperties(fpga_properties src,
 		FPGA_MSG("Invalid properties object");
 		return FPGA_INVALID_PARAM;
 	}
-	_dst = malloc(sizeof(struct _fpga_properties));
+	_dst = ase_malloc(sizeof(struct _fpga_properties));
 	if (NULL == _dst) {
 		FPGA_MSG("Failed to allocate memory for properties");
 		return FPGA_NO_MEMORY;
@@ -468,6 +470,41 @@ fpgaPropertiesSetObjectType(fpga_properties prop, fpga_objtype objtype)
 	_prop->objtype = objtype;
 	SET_FIELD_VALID(_prop, FPGA_PROPERTY_OBJTYPE);
 	return FPGA_OK;
+}
+
+fpga_result __FPGA_API__ fpgaPropertiesGetSegment(const fpga_properties prop, uint16_t *segment)
+{
+	struct _fpga_properties *_prop = (struct _fpga_properties *)prop;
+	fpga_result result = FPGA_INVALID_PARAM;
+
+	if (NULL == _prop || NULL == segment) {
+		FPGA_ERR("Attempting to dereference NULL pointer(s)");
+		return result;
+	}
+
+	if (FIELD_VALID(_prop, FPGA_PROPERTY_SEGMENT)) {
+		*segment = _prop->segment;
+		result = FPGA_OK;
+	} else {
+		FPGA_MSG("No segment");
+		result = FPGA_NOT_FOUND;
+	}
+
+	return result;
+}
+
+fpga_result __FPGA_API__ fpgaPropertiesSetSegment(fpga_properties prop, uint16_t segment)
+{
+	struct _fpga_properties *_prop = (struct _fpga_properties *)prop;
+	fpga_result result = FPGA_OK;
+
+	if (NULL == _prop) {
+		return FPGA_INVALID_PARAM;
+	}
+
+	_prop->segment = segment;
+	SET_FIELD_VALID(_prop, FPGA_PROPERTY_SEGMENT);
+	return result;
 }
 
 fpga_result __FPGA_API__ fpgaPropertiesGetBus(const fpga_properties prop,
@@ -1011,7 +1048,7 @@ fpga_result __FPGA_API__ fpgaCloneToken(fpga_token src,
 		return FPGA_INVALID_PARAM;
 	}
 
-	_dst = malloc(sizeof(struct _fpga_token));
+	_dst = ase_malloc(sizeof(struct _fpga_token));
 	if (NULL == _dst) {
 		FPGA_MSG("Failed to allocate memory for token");
 		return FPGA_NO_MEMORY;

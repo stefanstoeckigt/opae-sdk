@@ -52,13 +52,11 @@ from __future__ import print_function
 import argparse
 import ase_functions
 import os
-import re
 import sys
 import subprocess
 from collections import defaultdict
 import fnmatch
 import json
-import subprocess
 from sets import Set
 import shutil
 
@@ -222,12 +220,9 @@ def config_sources(fd, filelist):
         if (len(s) == 0):
             None
         elif (s[0] == '+'):
-            # + simulator commands go in both Verilog and VHDL
+            # + simulator commands go only in Verilog.  VHDL simulation
+            # doesn't support these.
             vlog_srcs.append(s)
-            # Unfortuantely, vhdlan (VCS VHDL simulator) doesn't support
-            # the same directives as the Verilog simulator.
-            if (tool_brand != 'VCS'):
-                vhdl_srcs.append(s)
         elif (s[0] == '-'):
             # For now assume - is an include directive and used only for
             # Verilog. Escape all but the first space, which likely
@@ -308,6 +303,12 @@ def config_sources(fd, filelist):
     return json_file
 
 
+def remove_prefix(text, prefix):
+    if text.startswith(prefix):
+        return text[len(prefix):]
+    return text
+
+
 #
 # Qsys has a compilation step.  When using case #1 above, detect Qsys
 # sources, compile them, and include the generated Verilog in the
@@ -319,6 +320,17 @@ def config_qsys_sources(filelist, vlog_srcs):
     try:
         srcs = commands_list_getoutput(
             "rtl_src_config --qsys --abs".split(" ") + [filelist])
+    except Exception:
+        errorExit("failed to read sources from {0}".format(filelist))
+
+    # Grab _hw.tcl sources
+    # _hw.tcl sources are used to describe and package
+    # components used in a Qsys system. They must be available
+    # in the simulation dir relative to the path specified in
+    # components.ipx with Qsys system
+    try:
+        tsrcs = commands_list_getoutput(
+            "rtl_src_config --tcl --abs".split(" ") + [filelist])
     except Exception:
         errorExit("failed to read sources from {0}".format(filelist))
 
@@ -337,6 +349,15 @@ def config_qsys_sources(filelist, vlog_srcs):
             if (s.lower().endswith('.qsys')):
                 qsys_srcs.append(s)
 
+    tcl_srcs = []
+    tsrcs = tsrcs.split('\n')
+
+    # filter tcl files
+    for s in tsrcs:
+        if (s):
+            if (s.lower().endswith('.tcl')):
+                tcl_srcs.append(s)
+
     # Any Qsys files found?
     if (not qsys_srcs):
         return None
@@ -345,27 +366,59 @@ def config_qsys_sources(filelist, vlog_srcs):
     # inside the simulator environment.  We do this to avoid polluting the
     # source tree with Qsys-generated files.
     copied_qsys_dirs = dict()
+    copied_tcl_dirs = dict()
     tgt_idx = 0
     os.mkdir('qsys_sim')
     qsys_srcs_copy = []
+    tcl_srcs_copy = []
     for q in qsys_srcs:
         src_dir = os.path.dirname(q)
+        base_filelist = os.path.dirname(filelist)
+        paths = [src_dir, base_filelist]
+        common_prefix = os.path.commonprefix(paths)
         # Has the source been copied already? Multiple Qsys files in the same
         # directory are copied together.
         if (src_dir not in copied_qsys_dirs):
-            b = os.path.basename(src_dir)
-            tgt_dir = os.path.join('qsys_sim', b + '_' + str(tgt_idx))
-            tgt_idx += 1
+            src_dir_base = os.path.basename(src_dir)
+            b = remove_prefix(src_dir, common_prefix)
+            b = b.strip("/")
+            tgt_dir = os.path.join('qsys_sim', b)
             copied_qsys_dirs[src_dir] = tgt_dir
-            print("Copying {0} to {1}...".format(src_dir, tgt_dir))
+            print("Preparing {0}:".format(q))
+            print("  Copying {0} to {1}...".format(src_dir, tgt_dir))
             try:
-                shutil.copytree(src_dir, tgt_dir)
-            except Exception:
-                errorExit("Failed to copy tree {0} to {1}".format(src_dir,
-                                                                  tgt_dir))
+                shutil.copytree(src_dir, tgt_dir, symlinks=False, ignore=None)
+            except Exception as e:
+                errorExit("Failed to copy tree {0} to "
+                          "{1}: Exception {2}".
+                          format(src_dir, tgt_dir, e))
 
         # Point to the copy
         qsys_srcs_copy.append(tgt_dir + q[len(src_dir):])
+
+    for t in tcl_srcs:
+        src_dir = os.path.dirname(t)
+        base_filelist = os.path.dirname(filelist)
+        paths = [src_dir, base_filelist]
+        common_prefix = os.path.commonprefix(paths)
+        # Has the source been copied already? Multiple Qsys files in the same
+        # directory are copied together.
+        if (src_dir not in copied_tcl_dirs):
+            src_dir_base = os.path.basename(src_dir)
+            b = remove_prefix(src_dir, common_prefix)
+            b = b.strip("/")
+            tgt_dir = os.path.join('qsys_sim', b)
+            copied_tcl_dirs[src_dir] = tgt_dir
+            print("Preparing {0}:".format(t))
+            print("  Copying {0} to {1}...".format(src_dir, tgt_dir))
+            try:
+                if not os.path.exists(tgt_dir):
+                    shutil.copytree(src_dir, tgt_dir,
+                                    symlinks=False, ignore=None)
+            except Exception as e:
+                errorExit("Failed to copy tree {0} to "
+                          "{1}: Exception = {2}".format(src_dir, tgt_dir, e))
+        tcl_srcs_copy.append(tgt_dir + q[len(src_dir):])
 
     # Second step: now that the trees are copied, update the paths in
     # ip_dirs to point to the copies.
@@ -770,8 +823,15 @@ fd.close()
 # Scripts for multiple tools are written since the default tool
 # can be selected at build time.
 
-# Write Synopsys Setup file & TCL script
-open("synopsys_sim.setup", "w").write("WORK > DEFAULT\nDEFAULT : ./work\n")
+# Write Synopsys setup file & TCL script. Setup includes stub
+# files that will hold lists of Quartus simulation libraries
+# that will be populated by the ASE Makefile.
+with open("synopsys_sim.setup", "w") as fd:
+    fd.write("WORK > DEFAULT\n")
+    fd.write("DEFAULT : ./work\n")
+    fd.write("OTHERS = ./work/synopsys_sim_quartus_verilog.setup\n")
+    fd.write("OTHERS = ./work/synopsys_sim_quartus_vhdl.setup\n")
+
 open("vcs_run.tcl", "w").write('dump -depth 0 \ndump -aggregates -add /'
                                '\nrun \nquit\n')
 

@@ -28,36 +28,29 @@ add_library(commonlib-ase SHARED common_test.h common_test.cpp)
 set(COMMON_SRC gtmain.cpp jsonParser.cpp
   unit/gtOpenClose_base.cpp
   unit/gtProperties_base.cpp
-  unit/gtOpen.cpp
-  unit/gtEnumerate.cpp
-  unit/gtOptionParser.cpp
-  unit/gtAnyValue.cpp
-  unit/gtsysfs.cpp
-  function/gtCxxEnumerate.cpp
-  function/gtCxxEvents.cpp
-  function/gtCxxOpenClose.cpp
-  function/gtCxxProperties.cpp
-  function/gtCxxExcept.cpp
-  function/gtCxxBuffer.cpp
-  function/gtCxxReset.cpp
-  function/gtCxxMMIO.cpp
-  function/gtCxxVersion.cpp
-  function/gtCxxErrors.cpp
   function/gtReset.cpp
   function/gtBuffer.cpp
   function/gtEnumerate.cpp
-  # function/gtError.cpp
   function/gtMMIO.cpp
   function/gtVersion.cpp
   function/gtOpenClose.cpp
   function/gtGetProperties.cpp)
+  
+configure_file ("${CMAKE_SOURCE_DIR}/cmake/config/config.h.in"
+                "${PROJECT_BINARY_DIR}/include/config.h" )
 set(TARGET_SRC_ASE ${COMMON_SRC})
 add_executable(gtase ${TARGET_SRC_ASE})
+
+set(UNIT_SRC unit/ase/gtmain.cpp
+  unit/ase/gtAseOps.cpp
+ )
+set(TARGET_UNIT_ASE ${UNIT_SRC})
+add_executable(gtAseU ${TARGET_UNIT_ASE})
 
 set(LIB_SRC_PATH_ASE ${OPAE_SDK_SOURCE}/ase/api/src)
 target_compile_definitions(commonlib-ase PUBLIC BUILD_ASE)
 
-target_link_libraries(commonlib-ase ${Target_LIB} ${GTEST_BOTH_LIBRARIES}
+target_link_libraries(commonlib-ase ${GTEST_BOTH_LIBRARIES}
   ${libjson-c_LIBRARIES})
 target_include_directories(commonlib-ase PUBLIC
   $<BUILD_INTERFACE:${GTEST_INCLUDE_DIRS}>
@@ -66,15 +59,26 @@ target_include_directories(commonlib-ase PUBLIC
   $<BUILD_INTERFACE:${OPAE_INCLUDE_DIR}>
   $<BUILD_INTERFACE:${OPAE_SDK_SOURCE}/libopae/src>)
 
-target_compile_definitions(gtase PRIVATE BUILD_ASE)
+target_compile_definitions(gtase PRIVATE BUILD_ASE HAVE_CONFIG_H)
 target_include_directories(gtase PUBLIC
   $<BUILD_INTERFACE:${GTEST_INCLUDE_DIRS}>
   $<BUILD_INTERFACE:${LIB_SRC_PATH_ASE}>
   $<BUILD_INTERFACE:${OPAE_INCLUDE_DIR}>
-  $<INSTALL_INTERFACE:include>)
+  $<INSTALL_INTERFACE:include>
+  $<BUILD_INTERFACE:${PROJECT_BINARY_DIR}/include>)
 
 target_link_libraries(gtase commonlib-ase safestr dl opae-c-ase ${libjson-c_LIBRARIES}
-  uuid ${GTEST_BOTH_LIBRARIES} opae-c++-utils opae-c++ opae-cxx-core)
+  uuid ${GTEST_BOTH_LIBRARIES})
+
+target_compile_definitions(gtAseU PUBLIC BUILD_ASE)
+target_include_directories(gtAseU PUBLIC
+  $<BUILD_INTERFACE:${GTEST_INCLUDE_DIRS}>
+  $<INSTALL_INTERFACE:include>
+  $<BUILD_INTERFACE:${LIB_SRC_PATH_ASE}>
+  $<BUILD_INTERFACE:${OPAE_INCLUDE_DIR}>
+  $<BUILD_INTERFACE:${OPAE_SDK_SOURCE}/ase/sw>)
+target_link_libraries(gtAseU opae-c-ase ${libjson-c_LIBRARIES}
+  uuid ${GTEST_BOTH_LIBRARIES})
 
 ############################################################################
 ## ASE compatible version of gtapi (gtase)  ################################
@@ -95,11 +99,23 @@ list(APPEND gtest_filter_exclude *Open*.open_drv_09)
 list(APPEND gtest_filter_exclude *Open*.07)
 list(APPEND gtest_filter_exclude *Enum*.18)
 list(APPEND gtest_filter_exclude *Enum*.19)
+list(APPEND gtest_filter_exclude *Enum*.enum_023)
+list(APPEND gtest_filter_exclude *Enum*.enum_024)
+list(APPEND gtest_filter_exclude *Enum*.enum_025)
+list(APPEND gtest_filter_exclude *Enum*.enum_028)
+list(APPEND gtest_filter_exclude *Enum*.enum_029)
+list(APPEND gtest_filter_exclude *Enum*.enum_030)
+list(APPEND gtest_filter_exclude *Enum*.enum_031)
+list(APPEND gtest_filter_exclude *Enum*.enum_032)
+list(APPEND gtest_filter_exclude *Enum*.enum_033)
+list(APPEND gtest_filter_exclude *Enum*.enum_034)
 list(APPEND gtest_filter_exclude *Buf*.PrepRel2MB01)
+list(APPEND gtest_filter_exclude *Buf*.Prep0B)
 list(APPEND gtest_filter_exclude *Buf*.Write01)
 list(APPEND gtest_filter_exclude *Buf*.WriteRead01)
 list(APPEND gtest_filter_exclude *Close*.03)
 list(APPEND gtest_filter_exclude *cpp*except_03)
+list(APPEND gtest_filter_exclude *cpp*.get_num_errors)
 
 set(gtest_filter_include_str "")
 foreach(filter ${gtest_filter_include})
@@ -129,10 +145,21 @@ set_property(TEST ase_all
   PROPERTY
   ENVIRONMENT "LD_PRELOAD=${CMAKE_BINARY_DIR}/lib/libopae-c-ase.so")
 
-if(CMAKE_BUILD_TYPE STREQUAL "Coverage")
-  set_target_for_coverage_local(opae-c-ase
-    TESTRUNNER ctest
-    TESTRUNNER_ARGS "-R;ase_all"
-    COVERAGE_EXTRA_COMPONENTS "opae-c-ase-server-intg_xeon_nlb")
-  add_dependencies(coverage_opae-c-ase gtase)
-endif(CMAKE_BUILD_TYPE STREQUAL "Coverage")
+if(BUILD_ASE_INTR)
+  if(CMAKE_BUILD_TYPE STREQUAL "Coverage")
+	set_target_for_coverage_local(opae-c-ase
+      TESTRUNNER ctest
+      TESTRUNNER_ARGS "-R;ase_all"
+      COVERAGE_EXTRA_COMPONENTS "opae-c-ase-server-intg_xeon_nlb"
+	  COVERAGE_EXTRA_COMPONENTS2 "opae-c-ase-server-hello_intr_afu")
+    add_dependencies(coverage_opae-c-ase gtase gtAseU)
+  endif(CMAKE_BUILD_TYPE STREQUAL "Coverage")
+else(BUILD_ASE_INTR)
+  if(CMAKE_BUILD_TYPE STREQUAL "Coverage")
+	set_target_for_coverage_local(opae-c-ase
+      TESTRUNNER ctest
+      TESTRUNNER_ARGS "-R;ase_all"
+      COVERAGE_EXTRA_COMPONENTS "opae-c-ase-server-intg_xeon_nlb")
+	add_dependencies(coverage_opae-c-ase gtase gtAseU)
+  endif(CMAKE_BUILD_TYPE STREQUAL "Coverage")
+endif(BUILD_ASE_INTR)

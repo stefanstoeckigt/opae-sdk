@@ -45,6 +45,10 @@ qsys_tag_map = {
     '.ip':   'IP_FILE'
 }
 
+tcl_tag_map = {
+    '.tcl':  'SOURCE_TCL_SCRIPT_FILE'
+}
+
 # QSYS ipx tag.
 qsys_ipx_tag_map = {
     '.ipx':  'IPX_FILE'
@@ -73,6 +77,7 @@ def validateTag(filename):
 
     if (ext not in quartus_tag_map and
             ext not in qsys_tag_map and
+            ext not in tcl_tag_map and
             ext not in qsys_ipx_tag_map and
             ext not in json_tag_map and
             ext not in sim_tag_map):
@@ -95,7 +100,7 @@ def lookupTag(filename, db):
 #
 def emitCfg(opts, cfg):
     # Filtering for specific file types?
-    file_type_filter = opts.qsys or opts.ipx or opts.json
+    file_type_filter = opts.qsys or opts.ipx or opts.json or opts.tcl
 
     if (not file_type_filter):
         # First emit all preprocessor configuration
@@ -123,7 +128,9 @@ def emitCfg(opts, cfg):
             None
         elif ("SI:" == c[:3]):
             # Simulator include
-            if (opts.sim):
+            if (lookupTag(c, tcl_tag_map) and (opts.sim or opts.tcl)):
+                print(c[3:])
+            elif (opts.sim):
                 print("-F " + c[3:])
         elif ("QI:" == c[:3]):
             # Quartus include
@@ -145,8 +152,16 @@ def emitCfg(opts, cfg):
             elif (opts.ipx):
                 if (lookupTag(c, qsys_ipx_tag_map)):
                     print(c)
+            elif (opts.tcl):
+                if (lookupTag(c, tcl_tag_map)):
+                    print(c)
             elif (tag is not None):
-                print('set_global_assignment -name {0} "{1}"'.format(tag, c))
+                # We assume that all bare .tcl files are part of Qsys
+                # and ignore them in Quartus flows. To get a .tcl
+                # file in Quartus, use QI:<path to>.tcl.
+                if (tag is not 'SOURCE_TCL_SCRIPT_FILE'):
+                    print('set_global_assignment -name {0} "{1}"'
+                          .format(tag, c))
 
 
 #
@@ -397,6 +412,9 @@ These commands affect script parsing:
     group.add_argument("--qsys",
                        action="store_true",
                        help="""Emit only QSYS and IP file names.""")
+    group.add_argument("--tcl",
+                       action="store_true",
+                       help="""Emit only TCL file names.""")
     group.add_argument("--ipx",
                        action="store_true",
                        help="""Emit only QSYS IPX file names.""")

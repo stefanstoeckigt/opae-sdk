@@ -1,4 +1,4 @@
-// Copyright(c) 2017, Intel Corporation
+// Copyright(c) 2017-2018, Intel Corporation
 //
 // Redistribution  and  use  in source  and  binary  forms,  with  or  without
 // modification, are permitted provided that the following conditions are met:
@@ -48,14 +48,22 @@
  */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
+#include <getopt.h>
 #include <unistd.h>
+
 #include <uuid/uuid.h>
 #include <opae/fpga.h>
-#include <stdlib.h>
-#include <getopt.h>
+
+#include "safe_string/safe_string.h"
 
 int usleep(unsigned);
+
+#ifndef TEST_TIMEOUT
+#define TEST_TIMEOUT 30000
+#endif // TEST_TIMEOUT
 
 #ifndef CL
 # define CL(x)                       ((x) * 64)
@@ -84,11 +92,12 @@ int usleep(unsigned);
 /* NLB0 AFU_ID */
 #define NLB0_AFUID "D8424DC4-A4A3-C413-F89E-433683F9040B"
 
+
 /*
  * macro to check return codes, print error message, and goto cleanup label
  * NOTE: this changes the program flow (uses goto)!
  */
-#define ON_ERR_GOTO(res, label, desc)                    \
+#define ON_ERR_GOTO(res, label, desc)              \
 	do {                                       \
 		if ((res) != FPGA_OK) {            \
 			print_err((desc), (res));  \
@@ -106,41 +115,144 @@ void print_err(const char *s, fpga_result res)
 	fprintf(stderr, "Error %s: %s\n", s, fpgaErrStr(res));
 }
 
+/*
+ * Global configuration of bus, set during parse_args()
+ * */
+struct config {
+	struct target {
+		int bus;
+	} target;
+	int open_flags;
+}
+
+config = {
+	.target = {
+		.bus = -1,
+	},
+	.open_flags = 0
+};
+
+#define GETOPT_STRING "B:s"
+fpga_result parse_args(int argc, char *argv[])
+{
+	struct option longopts[] = {
+		{ "bus",    required_argument, NULL, 'B' },
+		{ "shared", no_argument,       NULL, 's' },
+		{ NULL,     0,                 NULL,  0  }
+	};
+
+	int getopt_ret;
+	int option_index;
+	char *endptr = NULL;
+
+	while (-1 != (getopt_ret = getopt_long(argc, argv, GETOPT_STRING,
+						longopts, &option_index))) {
+		const char *tmp_optarg = optarg;
+		/* Checks to see if optarg is null and if not it goes to value of optarg */
+		if ((optarg) && ('=' == *tmp_optarg)){
+			++tmp_optarg;
+		}
+
+		switch (getopt_ret){
+		case 'B': /* bus */
+			if (NULL == tmp_optarg){
+				return FPGA_EXCEPTION;
+			}
+			endptr = NULL;
+			config.target.bus = (int) strtoul(tmp_optarg, &endptr, 0);
+			if (endptr != tmp_optarg + strnlen(tmp_optarg, 100)) {
+				fprintf(stderr, "invalid bus: %s\n", tmp_optarg);
+				return FPGA_EXCEPTION;
+			}
+			break;
+		case 's':
+			config.open_flags |= FPGA_OPEN_SHARED;
+			break;
+
+		default: /* invalid option */
+			fprintf(stderr, "Invalid cmdline option \n");
+			return FPGA_EXCEPTION;
+		}
+	}
+
+	return FPGA_OK;
+}
+
+fpga_result find_fpga(fpga_guid afu_guid,
+		      fpga_token *accelerator_token,
+		      uint32_t *num_matches_accelerators)
+{
+	fpga_properties filter = NULL;
+	fpga_result res1;
+	fpga_result res2 = FPGA_OK;
+
+	res1 = fpgaGetProperties(NULL, &filter);
+	ON_ERR_GOTO(res1, out, "creating properties object");
+
+	res1 = fpgaPropertiesSetObjectType(filter, FPGA_ACCELERATOR);
+	ON_ERR_GOTO(res1, out_destroy, "setting object type");
+
+	res1 = fpgaPropertiesSetGUID(filter, afu_guid);
+	ON_ERR_GOTO(res1, out_destroy, "setting GUID");
+
+	if (-1 != config.target.bus) {
+		res1 = fpgaPropertiesSetBus(filter, config.target.bus);
+		ON_ERR_GOTO(res1, out_destroy, "setting bus");
+	}
+
+	res1 = fpgaEnumerate(&filter, 1, accelerator_token, 1, num_matches_accelerators);
+	ON_ERR_GOTO(res1, out_destroy, "enumerating accelerators");
+
+out_destroy:
+	res2 = fpgaDestroyProperties(&filter);
+	ON_ERR_GOTO(res2, out, "destroying properties object");
+out:
+	return res1 != FPGA_OK ? res1 : res2;
+}
+
+/* function to get the bus number when there are multiple accelerators */
+fpga_result get_bus(fpga_token tok, uint8_t *bus)
+{
+	fpga_result res1;
+	fpga_result res2 = FPGA_OK;
+	fpga_properties props = NULL;
+
+	res1 = fpgaGetProperties(tok, &props);
+	ON_ERR_GOTO(res1, out, "reading properties from Token");
+
+	res1 = fpgaPropertiesGetBus(props, bus);
+	ON_ERR_GOTO(res1, out_destroy, "Reading bus from properties");
+
+out_destroy:
+	res2 = fpgaDestroyProperties(&props);
+	ON_ERR_GOTO(res2, out, "fpgaDestroyProps");
+out:
+	return res1 != FPGA_OK ? res1 : res2;
+}
+
 int main(int argc, char *argv[])
 {
-
 	char               library_version[FPGA_VERSION_STR_MAX];
 	char               library_build[FPGA_BUILD_STR_MAX];
-	fpga_properties    filter = NULL;
 	fpga_token         accelerator_token;
 	fpga_handle        accelerator_handle;
 	fpga_guid          guid;
-	uint32_t           num_matches;
+	uint32_t           num_matches_accelerators = 0;
 
 	volatile uint64_t *dsm_ptr    = NULL;
 	volatile uint64_t *status_ptr = NULL;
 	volatile uint64_t *input_ptr  = NULL;
 	volatile uint64_t *output_ptr = NULL;
 
-	uint64_t        dsm_wsid;
-	uint64_t        input_wsid;
-	uint64_t        output_wsid;
-	fpga_result     res = FPGA_OK;
+	uint64_t           dsm_wsid;
+	uint64_t           input_wsid;
+	uint64_t           output_wsid;
+	uint8_t            bus = 0xff;
+	uint32_t           i;
+	uint32_t           timeout;
+	fpga_result        res1 = FPGA_OK;
+	fpga_result        res2 = FPGA_OK;
 
-	int opt;
-	int open_flags = 0;
-
-	/* Parse command line for exclusive or shared access */
-	while ((opt = getopt(argc, argv, "s")) != -1) {
-		switch (opt) {
-		case 's':
-			open_flags |= FPGA_OPEN_SHARED;
-			break;
-		default:
-			printf("USAGE: %s [-s]\n", argv[0]);
-			exit(1);
-		}
-	}
 
 	/* Print version information of the underlying library */
 	fpgaGetOPAECVersionString(library_version, sizeof(library_version));
@@ -148,53 +260,60 @@ int main(int argc, char *argv[])
 	printf("Using OPAE C library version '%s' build '%s'\n", library_version,
 	       library_build);
 
+	res1 = parse_args(argc, argv);
+	ON_ERR_GOTO(res1, out_exit, "parsing arguments");
+
 	if (uuid_parse(NLB0_AFUID, guid) < 0) {
-		fprintf(stderr, "Error parsing guid '%s'\n", NLB0_AFUID);
-		goto out_exit;
+		res1 = FPGA_EXCEPTION;
+	}
+	ON_ERR_GOTO(res1, out_exit, "parsing guid");
+
+
+	/* Look for accelerator with NLB0_AFUID */
+	res1 = find_fpga(guid, &accelerator_token, &num_matches_accelerators);
+	ON_ERR_GOTO(res1, out_exit, "finding FPGA accelerator");
+
+	if (num_matches_accelerators <= 0) {
+		res1 = FPGA_NOT_FOUND;
+	}
+	ON_ERR_GOTO(res1, out_exit, "no matching accelerator");
+
+	if (num_matches_accelerators > 1) {
+		printf("Found more than one suitable accelerator. ");
+		res1 = get_bus(accelerator_token, &bus);
+		ON_ERR_GOTO(res1, out_exit, "getting bus num");
+		printf("Running on bus 0x%02x.\n", bus);
 	}
 
-	/* Look for accelerator with MY_ACCELERATOR_ID */
-	res = fpgaGetProperties(NULL, &filter);
-	ON_ERR_GOTO(res, out_exit, "creating properties object");
-
-	res = fpgaPropertiesSetObjectType(filter, FPGA_ACCELERATOR);
-	ON_ERR_GOTO(res, out_destroy_prop, "setting object type");
-
-	res = fpgaPropertiesSetGUID(filter, guid);
-	ON_ERR_GOTO(res, out_destroy_prop, "setting GUID");
-
-	/* TODO: Add selection via BDF / device ID */
-
-	res = fpgaEnumerate(&filter, 1, &accelerator_token, 1, &num_matches);
-	ON_ERR_GOTO(res, out_destroy_prop, "enumerating accelerators");
-
-	if (num_matches < 1) {
-		fprintf(stderr, "accelerator not found.\n");
-		res = fpgaDestroyProperties(&filter);
-		return FPGA_INVALID_PARAM;
-	}
 
 	/* Open accelerator and map MMIO */
-	res = fpgaOpen(accelerator_token, &accelerator_handle, open_flags);
-	ON_ERR_GOTO(res, out_destroy_tok, "opening accelerator");
+	res1 = fpgaOpen(accelerator_token, &accelerator_handle, config.open_flags);
+	ON_ERR_GOTO(res1, out_destroy_tok, "opening accelerator");
 
-	res = fpgaMapMMIO(accelerator_handle, 0, NULL);
-	ON_ERR_GOTO(res, out_close, "mapping MMIO space");
+	res1 = fpgaMapMMIO(accelerator_handle, 0, NULL);
+	ON_ERR_GOTO(res1, out_close, "mapping MMIO space");
+
 
 	/* Allocate buffers */
-	res = fpgaPrepareBuffer(accelerator_handle, LPBK1_DSM_SIZE,
+	res1 = fpgaPrepareBuffer(accelerator_handle, LPBK1_DSM_SIZE,
 				(void **)&dsm_ptr, &dsm_wsid, 0);
-	ON_ERR_GOTO(res, out_close, "allocating DSM buffer");
+	ON_ERR_GOTO(res1, out_close, "allocating DSM buffer");
 
-	res = fpgaPrepareBuffer(accelerator_handle, LPBK1_BUFFER_ALLOCATION_SIZE,
+	res1 = fpgaPrepareBuffer(accelerator_handle, LPBK1_BUFFER_ALLOCATION_SIZE,
 			   (void **)&input_ptr, &input_wsid, 0);
-	ON_ERR_GOTO(res, out_free_dsm, "allocating input buffer");
+	ON_ERR_GOTO(res1, out_free_dsm, "allocating input buffer");
 
-	res = fpgaPrepareBuffer(accelerator_handle, LPBK1_BUFFER_ALLOCATION_SIZE,
+	res1 = fpgaPrepareBuffer(accelerator_handle, LPBK1_BUFFER_ALLOCATION_SIZE,
 			   (void **)&output_ptr, &output_wsid, 0);
-	ON_ERR_GOTO(res, out_free_input, "allocating output buffer");
+	ON_ERR_GOTO(res1, out_free_input, "allocating output buffer");
 
 	printf("Running Test\n");
+
+	bus = 0xff;
+	res1 = get_bus(accelerator_token, &bus);
+	ON_ERR_GOTO(res1, out_free_output, "getting bus num");
+	printf("Running on bus 0x%02x.\n", bus);
+
 
 	/* Initialize buffers */
 	memset((void *)dsm_ptr,    0,    LPBK1_DSM_SIZE);
@@ -202,65 +321,68 @@ int main(int argc, char *argv[])
 	memset((void *)output_ptr, 0xBE, LPBK1_BUFFER_SIZE);
 
 	cache_line *cl_ptr = (cache_line *)input_ptr;
-	for (uint32_t i = 0; i < LPBK1_BUFFER_SIZE / CL(1); ++i) {
+	for (i = 0; i < LPBK1_BUFFER_SIZE / CL(1); ++i) {
 		cl_ptr[i].uint[15] = i+1; /* set the last uint in every cacheline */
 	}
 
+
 	/* Reset accelerator */
-	res = fpgaReset(accelerator_handle);
-	ON_ERR_GOTO(res, out_free_output, "resetting accelerator");
+	res1 = fpgaReset(accelerator_handle);
+	ON_ERR_GOTO(res1, out_free_output, "resetting accelerator");
+
 
 	/* Program DMA addresses */
-	uint64_t iova;
-	res = fpgaGetIOAddress(accelerator_handle, dsm_wsid, &iova);
-	ON_ERR_GOTO(res, out_free_output, "getting DSM IOVA");
+	uint64_t iova = 0;
+	res1 = fpgaGetIOAddress(accelerator_handle, dsm_wsid, &iova);
+	ON_ERR_GOTO(res1, out_free_output, "getting DSM IOVA");
 
-	res = fpgaWriteMMIO64(accelerator_handle, 0, CSR_AFU_DSM_BASEL, iova);
-	ON_ERR_GOTO(res, out_free_output, "writing CSR_AFU_DSM_BASEL");
+	res1 = fpgaWriteMMIO64(accelerator_handle, 0, CSR_AFU_DSM_BASEL, iova);
+	ON_ERR_GOTO(res1, out_free_output, "writing CSR_AFU_DSM_BASEL");
 
-	res = fpgaWriteMMIO32(accelerator_handle, 0, CSR_CTL, 0);
-	ON_ERR_GOTO(res, out_free_output, "writing CSR_CFG");
-	res = fpgaWriteMMIO32(accelerator_handle, 0, CSR_CTL, 1);
-	ON_ERR_GOTO(res, out_free_output, "writing CSR_CFG");
+	res1 = fpgaWriteMMIO32(accelerator_handle, 0, CSR_CTL, 0);
+	ON_ERR_GOTO(res1, out_free_output, "writing CSR_CFG");
+	res1 = fpgaWriteMMIO32(accelerator_handle, 0, CSR_CTL, 1);
+	ON_ERR_GOTO(res1, out_free_output, "writing CSR_CFG");
 
-	res = fpgaGetIOAddress(accelerator_handle, input_wsid, &iova);
-	ON_ERR_GOTO(res, out_free_output, "getting input IOVA");
-	res = fpgaWriteMMIO64(accelerator_handle, 0, CSR_SRC_ADDR, CACHELINE_ALIGNED_ADDR(iova));
-	ON_ERR_GOTO(res, out_free_output, "writing CSR_SRC_ADDR");
+	res1 = fpgaGetIOAddress(accelerator_handle, input_wsid, &iova);
+	ON_ERR_GOTO(res1, out_free_output, "getting input IOVA");
+	res1 = fpgaWriteMMIO64(accelerator_handle, 0, CSR_SRC_ADDR, CACHELINE_ALIGNED_ADDR(iova));
+	ON_ERR_GOTO(res1, out_free_output, "writing CSR_SRC_ADDR");
 
-	res = fpgaGetIOAddress(accelerator_handle, output_wsid, &iova);
-	ON_ERR_GOTO(res, out_free_output, "getting output IOVA");
-	res = fpgaWriteMMIO64(accelerator_handle, 0, CSR_DST_ADDR, CACHELINE_ALIGNED_ADDR(iova));
-	ON_ERR_GOTO(res, out_free_output, "writing CSR_DST_ADDR");
-	//fpgaProgramBufferAddressAndLength(accelerator_handle, dsm_wsid, 0, LPBK1_DSM_SIZE,
-	//				   CSR_AFU_DSM_BASEL);
-	//fpgaProgramBufferAddressAndLength(accelerator_handle, input_wsid, 0, LPBK1_BUFFER_SIZE,
-	//				   CSR_SRC_ADDR);
-	//fpgaProgramBufferAddressAndLength(accelerator_handle, output_wsid, 0, LPBK1_BUFFER_SIZE,
-	//				   CSR_DST_ADDR);
+	res1 = fpgaGetIOAddress(accelerator_handle, output_wsid, &iova);
+	ON_ERR_GOTO(res1, out_free_output, "getting output IOVA");
+	res1 = fpgaWriteMMIO64(accelerator_handle, 0, CSR_DST_ADDR, CACHELINE_ALIGNED_ADDR(iova));
+	ON_ERR_GOTO(res1, out_free_output, "writing CSR_DST_ADDR");
 
-	res = fpgaWriteMMIO32(accelerator_handle, 0, CSR_NUM_LINES, LPBK1_BUFFER_SIZE / CL(1));
-	ON_ERR_GOTO(res, out_free_output, "writing CSR_NUM_LINES");
-	res = fpgaWriteMMIO32(accelerator_handle, 0, CSR_CFG, 0x42000);
-	ON_ERR_GOTO(res, out_free_output, "writing CSR_CFG");
+	res1 = fpgaWriteMMIO32(accelerator_handle, 0, CSR_NUM_LINES, LPBK1_BUFFER_SIZE / CL(1));
+	ON_ERR_GOTO(res1, out_free_output, "writing CSR_NUM_LINES");
+	res1 = fpgaWriteMMIO32(accelerator_handle, 0, CSR_CFG, 0x42000);
+	ON_ERR_GOTO(res1, out_free_output, "writing CSR_CFG");
 
-	status_ptr = dsm_ptr + DSM_STATUS_TEST_COMPLETE/8;
+	status_ptr = dsm_ptr + DSM_STATUS_TEST_COMPLETE/sizeof(uint64_t);
+
 
 	/* Start the test */
-	res = fpgaWriteMMIO32(accelerator_handle, 0, CSR_CTL, 3);
-	ON_ERR_GOTO(res, out_free_output, "writing CSR_CFG");
+	res1 = fpgaWriteMMIO32(accelerator_handle, 0, CSR_CTL, 3);
+	ON_ERR_GOTO(res1, out_free_output, "writing CSR_CFG");
 
 	/* Wait for test completion */
+	timeout = TEST_TIMEOUT;
 	while (0 == ((*status_ptr) & 0x1)) {
 		usleep(100);
+		if (--timeout == 0) {
+			res1 = FPGA_EXCEPTION;
+			ON_ERR_GOTO(res1, out_free_output, "test timed out");
+		}
 	}
 
 	/* Stop the device */
-	res = fpgaWriteMMIO32(accelerator_handle, 0, CSR_CTL, 7);
-	ON_ERR_GOTO(res, out_free_output, "writing CSR_CFG");
+	res1 = fpgaWriteMMIO32(accelerator_handle, 0, CSR_CTL, 7);
+	ON_ERR_GOTO(res1, out_free_output, "writing CSR_CFG");
+
 
 	/* Check output buffer contents */
-	for (uint32_t i = 0; i < LPBK1_BUFFER_SIZE; i++) {
+	for (i = 0; i < LPBK1_BUFFER_SIZE; i++) {
 		if (((uint8_t *)output_ptr)[i] != ((uint8_t *)input_ptr)[i]) {
 			fprintf(stderr, "Output does NOT match input "
 				"at offset %i!\n", i);
@@ -270,38 +392,33 @@ int main(int argc, char *argv[])
 
 	printf("Done Running Test\n");
 
+
 	/* Release buffers */
 out_free_output:
-	res = fpgaReleaseBuffer(accelerator_handle, output_wsid);
-	ON_ERR_GOTO(res, out_free_input, "releasing output buffer");
+	res2 = fpgaReleaseBuffer(accelerator_handle, output_wsid);
+	ON_ERR_GOTO(res2, out_free_input, "releasing output buffer");
 out_free_input:
-	res = fpgaReleaseBuffer(accelerator_handle, input_wsid);
-	ON_ERR_GOTO(res, out_free_dsm, "releasing input buffer");
+	res2 = fpgaReleaseBuffer(accelerator_handle, input_wsid);
+	ON_ERR_GOTO(res2, out_free_dsm, "releasing input buffer");
 out_free_dsm:
-	res = fpgaReleaseBuffer(accelerator_handle, dsm_wsid);
-	ON_ERR_GOTO(res, out_unmap, "releasing DSM buffer");
+	res2 = fpgaReleaseBuffer(accelerator_handle, dsm_wsid);
+	ON_ERR_GOTO(res2, out_unmap, "releasing DSM buffer");
 
 	/* Unmap MMIO space */
 out_unmap:
-	res = fpgaUnmapMMIO(accelerator_handle, 0);
-	ON_ERR_GOTO(res, out_close, "unmapping MMIO space");
+	res2 = fpgaUnmapMMIO(accelerator_handle, 0);
+	ON_ERR_GOTO(res2, out_close, "unmapping MMIO space");
 
 	/* Release accelerator */
 out_close:
-	res = fpgaClose(accelerator_handle);
-	ON_ERR_GOTO(res, out_destroy_tok, "closing accelerator");
+	res2 = fpgaClose(accelerator_handle);
+	ON_ERR_GOTO(res2, out_destroy_tok, "closing accelerator");
 
 	/* Destroy token */
 out_destroy_tok:
-	res = fpgaDestroyToken(&accelerator_token);
-	ON_ERR_GOTO(res, out_destroy_prop, "destroying token");
-
-	/* Destroy properties object */
-out_destroy_prop:
-	res = fpgaDestroyProperties(&filter);
-	ON_ERR_GOTO(res, out_exit, "destroying properties object");
+	res2 = fpgaDestroyToken(&accelerator_token);
+	ON_ERR_GOTO(res2, out_exit, "destroying token");
 
 out_exit:
-	return res;
-
+	return res1 != FPGA_OK ? res1 : res2;
 }

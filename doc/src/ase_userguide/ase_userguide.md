@@ -314,8 +314,8 @@ Run ```rtl_src_config --help``` for a list of options and the required command s
 #### generate_ase_environment.py ####
 
 The ```/ase/scripts/generate_ase_environment.py``` generates platform configuration files. ```afu_sim_setup``` invokes it
-automtically. A legacy mode in ```generate_ase_environment.py``` performs a brute-force check of the specified AFU RTL
-directories, attempting to define a compilation. This brute-force mode is
+automatically. A legacy mode in ```generate_ase_environment.py``` performs a brute-force check of the specified AFU RTL
+directories, attempting to define a compilation. This brute-force mode is 
 imperfect and lists every file ending in ```.sv, .vs, .vhd, or .v``` and directories separated by ```+```. It also may fail
 when compilation is order-dependent.
 
@@ -327,7 +327,7 @@ Run ```generate_ase_environment.py --help``` for a list of arguments.
 Platform. Use ```discrete``` for the Intel PAC.
 * ```-x```: The optional exclusions argument lists exclusions for path searches.
 
-The Synopsys and Mentor Graphics RTL simulatiors generate the following scripts.
+The Synopsys and Mentor Graphics RTL simulators generate the following scripts.
 * Synopsys: Creates ```synopsys_sim.setup``` and ```vcs_run.tcl``` in the ```VCS``` configuration directory.
 * Mentor Graphics: Creates ```vsim_run.tcl``` in the ```QUESTA``` configuration directory.
 
@@ -520,8 +520,8 @@ Use the OPAE ASE library implementation and compile it to the OPAE software appl
     # Compile command
     $ gcc -g -o hello_fpga_ase hello_fpga.c /tmp/opae/myinst/lib/libopae-c-ase.so -I /tmp/opae/myinst/include/ -std=c99 -luuid
 
-    # When running the application, start the simulatorm, then set LD_LIBRARY_PATH and ASE_WORKDIR
-    $ ./hello_fpga_ase
+	# When running the application, start the simulator, then set LD_LIBRARY_PATH and ASE_WORKDIR
+	$ ./hello_fpga_ase
 
 ```
 
@@ -1007,7 +1007,7 @@ The following list of ASE errors and warnings is not comprehensive:
 | ```ase_sources.mk: No such file or directory``` | ASE Environment has not been generated. | Generate an AFU RTL listing (in ```vlog_files.list``` and ``` ase_sources.mk```) configuration. <br> You can use ```ase/scripts/generate_ase_environment.py```to generate these files. |
 | An ASE instance is probably still running in current directory. | An ASE simulation is already running in the ```$ASE_WORKDIR``` directory. | If the simulation process is unusable or unreachable, use the ```ase/scripts/ipc_clean.py``` script to clean the simulation temporary files using: <br>```$ make clean```. <br> Then rebuild the simulator. |
 
-# Revision History ##
+## Revision History ##
 
  | Document Version |  Intel Acceleration Stack Version  | Changes  |
  | ---------------- |------------------------------------|----------|
